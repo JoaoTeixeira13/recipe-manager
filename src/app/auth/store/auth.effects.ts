@@ -16,9 +16,68 @@ export interface AuthResponseData {
   registered?: boolean;
 }
 
+const handleAuthentication = (
+  expiresIn: number,
+  email: string,
+  userId: string,
+  token: string
+) => {
+  const expirationDate = new Date(new Date().getTime() + expiresIn * 1000);
+
+  return new AuthActions.AuthenticateSuccess({
+    email: email,
+    userId: userId,
+    token: token,
+    expirationDate: expirationDate,
+  });
+};
+
+const handleError = (errorResponse: any) => {
+  let errorMessage = 'An error occurred. Please retry with valid credentials.';
+  if (!errorResponse.error || !errorResponse.error.error) {
+    return of(new AuthActions.AuthenticateFail(errorMessage));
+  }
+  switch (errorResponse.error.error.message) {
+    case 'EMAIL_EXISTS':
+      errorMessage = 'This email exists already.';
+  }
+
+  // non error observable must be returned to prevent process from being killed
+  return of(new AuthActions.AuthenticateFail(errorMessage));
+};
+
 @Injectable()
 export class AuthEffects {
   apiKey: string = require('../../secrets.json').API_KEY;
+
+  @Effect()
+  authSignup = this.actions$.pipe(
+    ofType(AuthActions.SIGNUP_START),
+    switchMap((signupAction: AuthActions.SignupStart) => {
+      return this.http
+        .post<AuthResponseData>(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${this.apiKey}`,
+          {
+            email: signupAction.payload.email,
+            password: signupAction.payload.password,
+            returnSecureToken: true,
+          }
+        )
+        .pipe(
+          map((resData) => {
+            return handleAuthentication(
+              +resData.expiresIn,
+              resData.email,
+              resData.localId,
+              resData.idToken
+            );
+          }),
+          catchError((errorResponse) => {
+            return handleError(errorResponse);
+          })
+        );
+    })
+  );
 
   @Effect()
   authLogin = this.actions$.pipe(
@@ -35,30 +94,15 @@ export class AuthEffects {
         )
         .pipe(
           map((resData) => {
-            const expirationDate = new Date(
-              new Date().getTime() + +resData.expiresIn * 1000
+            return handleAuthentication(
+              +resData.expiresIn,
+              resData.email,
+              resData.localId,
+              resData.idToken
             );
-
-            return new AuthActions.Login({
-              email: resData.email,
-              userId: resData.localId,
-              token: resData.idToken,
-              expirationDate: expirationDate,
-            });
           }),
           catchError((errorResponse) => {
-            let errorMessage =
-              'An error occurred. Please retry with valid credentials.';
-            if (!errorResponse.error || !errorResponse.error.error) {
-              return of(new AuthActions.LoginFail(errorMessage));
-            }
-            switch (errorResponse.error.error.message) {
-              case 'EMAIL_EXISTS':
-                errorMessage = 'This email exists already.';
-            }
-
-            // non error observable must be returned to prevent process from being killed
-            return of(new AuthActions.LoginFail(errorMessage));
+            return handleError(errorResponse);
           })
         );
     })
@@ -66,7 +110,7 @@ export class AuthEffects {
 
   @Effect({ dispatch: false })
   authSuccess = this.actions$.pipe(
-    ofType(AuthActions.LOGIN),
+    ofType(AuthActions.AUTHENTICATE_SUCCESS),
     tap(() => {
       this.router.navigate(['/']);
     })
