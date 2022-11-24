@@ -29,5 +29,10 @@ export class RecipeEffects {
       return new RecipesActions.SetRecipes(recipes);
     })
   );
+
+@Effect()
+storeRecipes= this.actions$.pipe(ofType())
+
+
   constructor(private actions$: Actions, private http: HttpClient) {}
 }
